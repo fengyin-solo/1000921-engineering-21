@@ -1,3 +1,25 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-pydantic>=2.6
+# 后端依赖：全部精确锁定（含传递依赖），保证任何人拉取代码后安装结果一致。
+# 更新方式：在干净的 venv 中执行
+#   pip install -U fastapi "uvicorn[standard]" pydantic
+#   pip freeze > requirements.txt
+# 注意保留本说明注释；Python 要求 >= 3.11。
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+click==8.5.0
+fastapi==0.141.1
+h11==0.16.0
+httptools==0.8.0
+idna==3.20
+packaging==26.3
+pydantic==2.13.5
+pydantic-core==2.46.5
+python-dotenv==1.2.3
+PyYAML==6.0.3
+starlette==1.7.0
+typing-inspection==0.4.4
+typing-extensions==4.16.0
+uvicorn==0.54.0
+uvloop==0.22.1
+watchfiles==1.3.0
+websockets==17.1
