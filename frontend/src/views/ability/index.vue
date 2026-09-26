@@ -23,6 +23,13 @@
         <span>{{ field }}</span>
         <input v-model="filters[field]" :placeholder="`按${field}检索`" />
       </label>
+      <label class="filter-item">
+        <span>验证状态</span>
+        <select v-model="filters.status">
+          <option value="">全部状态</option>
+          <option v-for="status in statuses" :key="status" :value="status">{{ status }}</option>
+        </select>
+      </label>
       <button class="btn" type="submit">查询</button>
       <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
     </form>
@@ -36,10 +43,10 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">{{ row[column] === '' || row[column] == null ? '—' : row[column] }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in availableActions(String(row.status))"
               :key="action"
               class="link"
               type="button"
@@ -47,6 +54,7 @@
             >
               {{ action }}
             </button>
+            <span v-if="!availableActions(String(row.status)).length" class="muted">流程已结束</span>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -63,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
@@ -71,15 +79,32 @@ type Row = Record<string, string | number | null>
 
 const ENDPOINT = '/api/ability'
 const columns = ["验证编号", "组织方", "检测项目", "参加人员", "样品编号", "上报日期", "结果评定", "验证状态"]
-const actions = ["报名参加", "上报结果", "接收评定"]
 const statuses = ["待参加", "待评定", "已通过", "未通过"]
-const stats = [{"label": "待参加验证", "value": 0}, {"label": "评定中验证", "value": 0}, {"label": "已通过验证", "value": 0}]
 
 const rows = ref<Row[]>([])
+const statsRows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+const filterFields = ["验证编号", "组织方", "检测项目"]
+
+const stats = computed(() => [
+  { label: "待参加验证", value: countByStatus(statsRows.value, "待参加") },
+  { label: "待评定验证", value: countByStatus(statsRows.value, "待评定") },
+  { label: "已通过验证", value: countByStatus(statsRows.value, "已通过") },
+  { label: "未通过验证", value: countByStatus(statsRows.value, "未通过") },
+])
+
+function countByStatus(source: Row[], status: string): number {
+  return source.filter((row) => String(row.status) === status).length
+}
+
+// 状态机：待参加只能报名；待评定可补报结果或接收评定；终态无动作
+function availableActions(status: string): string[] {
+  if (status === "待参加") return ["报名参加"]
+  if (status === "待评定") return ["上报结果", "接收评定-合格", "接收评定-不合格"]
+  return []
+}
 
 function resetFilters() {
   filters.value = {}
@@ -91,18 +116,33 @@ function exportRows() {
 }
 
 function openCreate() {
-  errorMessage.value = '能力验证登记入口尚未接入审批流'
+  errorMessage.value = '能力验证登记入口尚未接入审批流，可调用接口 POST /api/ability 直接登记'
 }
 
-async function runAction(action: string, row: Row) {
+async function runAction(label: string, row: Row) {
   errorMessage.value = ''
+  let action = label
+  const values: Record<string, string> = {}
+  if (label === '报名参加') {
+    const participants = window.prompt('请输入参加人员（多人用顿号分隔）', String(row['参加人员'] ?? ''))
+    if (participants === null) return
+    values['参加人员'] = participants
+  } else if (label === '上报结果') {
+    const reportDate = window.prompt('请输入上报日期（YYYY-MM-DD）', new Date().toISOString().slice(0, 10))
+    if (reportDate === null) return
+    values['上报日期'] = reportDate
+  } else if (label.startsWith('接收评定')) {
+    action = '接收评定'
+    values['结果评定'] = label.endsWith('合格') ? '合格' : '不合格'
+  }
   try {
     const response = await request(`${ENDPOINT}/${row.id}/actions`, {
       method: 'POST',
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ values: { action, ...values } }),
     })
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null
     if (!response.ok) {
-      throw new Error('能力验证动作未生效，请稍后重试')
+      throw new Error(payload?.message ?? '能力验证动作未生效，请稍后重试')
     }
     await reload()
   } catch (error) {
@@ -112,15 +152,24 @@ async function runAction(action: string, row: Row) {
 
 async function reload() {
   errorMessage.value = ''
-  const query = new URLSearchParams(filters.value as Record<string, string>).toString()
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters.value)) {
+    if (value.trim()) params.set(key === '验证编号' ? 'keyword' : key, value.trim())
+  }
   try {
-    const response = await request(`${ENDPOINT}?${query}`)
-    if (!response.ok) {
-      throw new Error('能力验证列表读取失败')
+    // 列表按条件过滤；统计卡片单独拉一次全量，互不污染
+    const [listResponse, allResponse] = await Promise.all([
+      request(`${ENDPOINT}?${params.toString()}`),
+      request(`${ENDPOINT}?size=200`),
+    ])
+    if (!listResponse.ok) throw new Error('能力验证列表读取失败')
+    const listPayload = await listResponse.json()
+    rows.value = listPayload.items ?? []
+    total.value = listPayload.total ?? rows.value.length
+    if (allResponse.ok) {
+      const allPayload = await allResponse.json()
+      statsRows.value = allPayload.items ?? []
     }
-    const payload = await response.json()
-    rows.value = payload.items ?? []
-    total.value = payload.total ?? rows.value.length
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '能力验证列表读取失败'
   }

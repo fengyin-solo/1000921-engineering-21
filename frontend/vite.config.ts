@@ -26,6 +26,18 @@ export default defineConfig({
       },
     },
   },
+  // preview 与 dev 使用同一套代理，保证"构建后启动"链路接口同样可达
+  preview: {
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: false,
+    proxy: {
+      '/api': {
+        target: proxyTarget,
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     outDir: 'dist',
     sourcemap: false,

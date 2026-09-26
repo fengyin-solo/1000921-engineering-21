@@ -50,9 +50,15 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条能力验证执行报名参加、上报结果、接收评定；不允许的动作会被拦下并说明原因。"""
+    """对单条能力验证执行报名参加、上报结果、接收评定；不允许的动作会被拦下并说明原因。
+
+    - 报名参加：values 里带「参加人员」（必填）、「样品编号」
+    - 上报结果：values 里带「上报日期」（必填）、「样品编号」
+    - 接收评定：values 里带「结果评定」=「合格」或「不合格」
+    """
     action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    extra = {key: value for key, value in payload.values.items() if key != "action"}
+    entry, message = service.run_action(entry_id, action, extra)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)

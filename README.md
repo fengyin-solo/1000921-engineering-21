@@ -9,41 +9,135 @@
 
 ```text
 .
+├── backend/                  FastAPI（Python） 后端
+│   ├── app/routers/          每个业务模块一组接口
+│   ├── app/services/         业务规则与状态流转
+│   ├── app/seed.py           内存示例数据（启动自动灌入）
+│   ├── app/store.py          内存数据仓库
+│   ├── requirements.lock     全量依赖版本锁定
+│   ├── run.sh                单独启动后端
+│   └── scripts/check_ability.py  能力验证接口自检脚本
 ├── frontend/                 Vue 3 + Vite + TypeScript 前端
 │   ├── src/views/            每个业务模块一个页面
 │   ├── src/api/              统一请求封装
 │   ├── src/stores/           会话与筛选状态
-│   └── vite.config.ts        dev server 配置（open: false）
-├── backend/                  FastAPI（Python） 后端
-│   ├── app/routers/          每个业务模块一组接口
-│   ├── app/services/         业务规则与状态流转
-│   └── app/store.py          内存数据仓库与示例数据
-├── .gitignore
+│   ├── package-lock.json     依赖版本锁定（npm ci 使用）
+│   └── vite.config.ts        dev/preview server 配置（open: false）
+├── scripts/dev.sh            一键开发链路（构建+启动+自检）
+├── Makefile                  make up / dev / check 入口
+├── .env.example              环境变量模板（零配置也能跑）
 └── docker-compose.yml
 ```
 
-## 启动
+## 本地开发（从零到能用）
 
-### 后端
+### 前置要求
+
+| 工具 | 版本 | 说明 |
+| --- | --- | --- |
+| Python | 3.10+ | 代码使用 `X | Y` 类型语法；Debian/Ubuntu 精简系统需有 `python3-venv`（脚本也提供了无 venv 时的自动引导） |
+| Node.js | 18+（建议 20） | |
+| npm | 随 Node 安装 | 依赖按 `package-lock.json` 精确锁定 |
+| curl | 任意版本 | 就绪探测与自检使用 |
+
+无需任何数据库；数据是内存仓库，每次启动自动灌入示例数据。
+
+### 一条命令搞定
 
 ```bash
+make          # 等价于 scripts/dev.sh：装依赖(锁版本) → 构建前端 → 起前后端 → 能力验证自检
+```
+
+脚本会依次完成：
+
+1. **依赖预检**：缺 python3/node/npm/curl 时直接报「属于【依赖缺失】」并列出缺什么；
+2. **环境变量预检**：读取 `.env`（没有则用默认值），`APP_PORT` 等取值非法时报「属于【环境变量配置错误】」；
+3. **按锁文件安装**：后端 `requirements.lock`、前端 `npm ci`，跨机器残留的损坏 `.venv` 会自动重建；
+4. **构建并启动**：前端 `vue-tsc` 类型检查 + `vite build` 后起 preview，后端起 uvicorn；
+5. **就绪自检**：自动跑能力验证登记/报名/上报/评定全链路，全部通过后打印访问地址。
+
+其他常用命令：
+
+```bash
+make dev      # 前端热更新模式（vite dev，跳过生产构建）
+make check    # 服务已在运行时，单独重跑能力验证接口自检
+make install  # 只安装依赖
+make backend  # 只起后端（:8000）
+make frontend # 只起前端 dev server（:5173）
+```
+
+启动成功后终端会打印：
+
+```text
+平台首页     : http://127.0.0.1:5173/
+能力验证页面 : http://127.0.0.1:5173/ability
+后端健康检查 : http://127.0.0.1:8000/api/health
+能力验证自检 : http://127.0.0.1:8000/api/health/ability
+接口文档     : http://127.0.0.1:8000/docs
+```
+
+### 环境变量
+
+本地零配置即可运行；需要自定义时：
+
+```bash
+cp .env.example .env
+```
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `APP_ENV` | `local` | 运行环境标识 |
+| `APP_HOST` | `127.0.0.1` | 后端监听地址 |
+| `APP_PORT` | `8000` | 后端端口；改了需同步前端代理 `VITE_PROXY_TARGET` |
+| `CORS_ORIGINS` | 本地两个 5173 来源 | 允许跨域来源，逗号分隔 |
+| `SEED_DEMO_DATA` | `1` | 启动时是否灌入示例数据 |
+| `VITE_PROXY_TARGET` | `http://127.0.0.1:8000` | 前端 `/api` 代理目标（见 `frontend/.env.development`） |
+
+启动失败时的判定口径：脚本输出会明确标注是 **【依赖缺失】**（基础工具/venv/pip/npm 安装失败）
+还是 **【环境变量配置错误】**（`.env` 取值非法、端口被占用），并给出修复动作。
+
+### 验证能力验证模块
+
+启动后自带 4 条覆盖完整生命周期的示例数据：
+
+| 验证编号 | 组织方 | 状态 |
+| --- | --- | --- |
+| ABIL-2026-001 | CNAS | 待参加 |
+| ABIL-2026-002 | 国家环境监测能力验证技术委员会 | 待评定（已上报结果） |
+| ABIL-2026-003 | 中国食品药品检定研究院 | 已通过（评定合格） |
+| ABIL-2026-004 | 省级检验检测机构能力验证中心 | 未通过（评定不合格） |
+
+- 浏览器打开 http://127.0.0.1:5173/ability 可看列表、按状态筛选、执行动作；
+- `make check`（或 `python backend/scripts/check_ability.py`）会真实调用接口：
+  新建记录 → 报名参加（待参加→待评定）→ 上报结果 → 接收评定（合格→已通过 / 不合格→未通过）
+  → 验证终态动作被拦截，任一步失败即以非零码退出。
+
+能力验证状态机：
+
+```text
+待参加 ──报名参加──> 待评定 ──接收评定(合格)──> 已通过
+                       └────接收评定(不合格)──> 未通过
+```
+
+「上报结果」是待评定阶段的信息补录（填写上报日期），不改变状态；跨状态跳转会被服务端拒绝。
+
+### 手动分步启动（不走一键脚本时）
+
+```bash
+# 后端
 cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.lock   # 注意是 .lock，锁定全部传递依赖
 ./run.sh
+
+# 前端
+cd frontend
+npm ci          # 必须用 ci，严格按 package-lock.json 安装；不要用 npm install 改写锁文件
+npm run build   # 类型检查 + 生产构建
+npm run dev     # 或直接起 dev server
 ```
 
 健康检查：`curl http://127.0.0.1:8000/api/health`
-
-### 前端
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-前端默认监听 `http://127.0.0.1:5173/`，dev server 不会自动打开浏览器，
-需要自己访问。`/api` 由 vite 代理到后端 `http://127.0.0.1:8000`。
 
 ## 业务模块
 
